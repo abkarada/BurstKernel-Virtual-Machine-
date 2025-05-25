@@ -3,7 +3,7 @@ TARGET = kernel
 ISO = burstkernel.iso
 BUILD = build
 SRC_ASM = boot/boot.S
-SRC_C = $(filter-out kernel/task.c, $(wildcard kernel/*.c))  # task.c hariç tutuldu
+SRC_C = $(filter-out kernel/task.c, $(wildcard kernel/*.c))
 OBJ_ASM = $(BUILD)/boot.o
 OBJ_C = $(patsubst kernel/%.c,$(BUILD)/%.o,$(SRC_C))
 TASKPOOL_BIN = taskpool.bin
@@ -21,43 +21,29 @@ LDFLAGS = -m elf_i386
 .PHONY: all clean run
 
 clean:
-	rm -rf $(BUILD) $(TARGET).bin $(ISO) iso gen_taskpool taskpool.bin
+	@rm -rf $(BUILD) $(TARGET).bin $(ISO) iso gen_taskpool taskpool.bin
 
-all: $(ISO)
+all: $(BUILD) $(OBJ_ASM) $(OBJ_C) $(TASKPOOL_OBJ)
+	$(LD) -m elf_i386 -T $(LINKER) -o $(TARGET).bin $(OBJ_ASM) $(OBJ_C) $(TASKPOOL_OBJ)
+	@mkdir -p iso/boot/grub
+	@cp $(TARGET).bin iso/boot/kernel
+	@cp boot/grub/grub.cfg iso/boot/grub
+	@grub-mkrescue -o $(ISO) iso
 
-# ISO üretimi
-$(ISO): $(TARGET).bin
-	mkdir -p iso/boot/grub
-	cp $< iso/boot/kernel
-	cp boot/grub/grub.cfg iso/boot/grub
-	grub-mkrescue -o $@ iso
+$(BUILD):
+	@mkdir -p $(BUILD)
 
-# kernel.bin üretimi
-$(TARGET).bin: $(OBJ_ASM) $(OBJ_C) $(TASKPOOL_OBJ)
-	$(LD) $(LDFLAGS) -T $(LINKER) -o $@ $^
-
-# ASM derle
-$(OBJ_ASM): $(SRC_ASM)
-	mkdir -p $(BUILD)
+$(BUILD)/boot.o: $(SRC_ASM)
 	$(AS) $(CFLAGS) -c $< -o $@
 
-# C kaynaklarını derle
 $(BUILD)/%.o: kernel/%.c
-	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# taskpool.bin üret ve objeye dönüştür (i386 uyumlu)
-$(TASKPOOL_BIN):
-	@gcc gen_taskpool.c -o gen_taskpool
-	./gen_taskpool
-
 $(TASKPOOL_OBJ): $(TASKPOOL_BIN)
-	ld -m elf_i386 -r -b binary $< -o $@
+	$(LD) -m elf_i386 -r -b binary $(TASKPOOL_BIN) -o $(TASKPOOL_OBJ)
 
-# Temizlik
-clean:
-	rm -rf $(BUILD) $(TARGET).bin $(ISO) iso gen_taskpool taskpool.bin
+$(TASKPOOL_BIN): gen_taskpool
+	@./gen_taskpool
 
-# QEMU ile çalıştır
-run: $(ISO)
-	qemu-system-i386 -cdrom $(ISO)
+gen_taskpool: gen_taskpool.c
+	$(CC) -o $@ $<

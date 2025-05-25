@@ -1,11 +1,22 @@
 #include <stdint.h>
-#include "io.h" // inb/outb fonksiyonları burada
+
 
 #define PCI_CONFIG_ADDRESS 0xCF8
 #define PCI_CONFIG_DATA    0xCFC
 #define PCI_VENDOR_ID_OFFSET 0x00
 #define PCI_DEVICE_ID_OFFSET 0x02
 // PCI config alanından 16-bit veri oku
+
+static inline void outb(uint16_t port, uint8_t val) {
+    __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline uint8_t inb(uint16_t port) {
+    uint8_t ret;
+    __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
 uint16_t pci_config_read_word(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     uint32_t address = (1U << 31)
                      | ((uint32_t)bus << 16)
