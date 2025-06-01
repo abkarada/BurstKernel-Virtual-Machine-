@@ -3,6 +3,8 @@
  *───────────────────────────────────────────────────────────*/
 #include "pci.h"
 
+#define INTEL_VID     0x8086
+#define E1000_DID     0x100E 
 /*────────────────────  Yardımcı I/O makroları  ─────────────*/
 static inline void outl(uint16_t port, uint32_t val)
 {
@@ -33,6 +35,18 @@ uint32_t pci_config_read32(uint8_t bus,
 
     outl(PCI_CONFIG_ADDRESS, address);
     return inl(PCI_CONFIG_DATA);
+}
+
+uint32_t pci_find_e1000(void)
+{
+    uint8_t bus, slot, func;
+
+    if (pci_find_device(INTEL_VID, E1000_DID, &bus, &slot, &func) != 0)
+        return 0;                                   /* bulunamadı   */
+
+    /* BAR0 (MMIO) */
+    uint32_t bar0 = pci_read_bar(bus, slot, func, 0);
+    return bar0;                                    /* phys. addr   */
 }
 
 /* 16-bit okuma (cfg-space word) */
