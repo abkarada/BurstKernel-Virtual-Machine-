@@ -1,49 +1,46 @@
 #!/usr/bin/env bash
 # start_machines.sh  –  BurstKernel otomatik derleme + QEMU başlatıcı
-
 set -euo pipefail
 
-### ——— Ayarlanabilir değerler ———————————————
-RAM_FILE=/dev/shm/shrmem          # Paylaşımlı tmpfs dosyası
-RAM_MB=128                        # QEMU -m parametresi (MB)
-RAM_SIZE=$((RAM_MB*1024*1024))    # Bayt karşılığı
-SERIAL_BASE=7000                  # Telnet port başlangıcı
-MAKE_CMD="make -s"                # Sessiz make
-QEMU="qemu-system-i386"           # i686 çekirdek
-QEMU_CPU="-cpu host"              # KVM varsa -enable-kvm eklenir
-### ————————————————————————————————————————————————
+### Ayarlanabilirler
+RAM_FILE=/dev/shm/shrmem
+RAM_MB=128
+RAM_SIZE=$((RAM_MB*1024*1024))
+SERIAL_BASE=7000
+MAKE_CMD="make -s"
+QEMU="qemu-system-i386"
+QEMU_CPU="-cpu host"
 
-# ——— VM sayısı argümanı ———
 [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || { echo "Kullanım: $0 <VM_SAYISI>"; exit 1; }
 VM_TOTAL=$1
 echo "[+] $VM_TOTAL VM hazırlanıyor…"
 
-# ——— Paylaşımlı RAM dosyası oluştur ———
 echo "[+] Paylaşımlı RAM dosyası: $RAM_FILE (${RAM_MB} MiB)"
 truncate -s "$RAM_SIZE" "$RAM_FILE"
 
-# ——— Görev bloklarını yaz ———
 echo "[+] writer_ram ile görev bloğu yerleştiriliyor…"
 gcc writer_ram.c -o writer_ram
 ./writer_ram "$VM_TOTAL"
 
-# ——— Ctrl-C temizleme ———
+### -- Geçici ELF dizini --
+TMPDIR=$(mktemp -d)
+echo "[+] Geçici ELF dizini: $TMPDIR"
+
 PIDS=()
 cleanup() {
     echo "[*] VM’ler kapatılıyor…"
     for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done
-    rm -f writer_ram
+    rm -rf "$TMPDIR" writer_ram
     exit
 }
 trap cleanup INT TERM
 
-# ——— Her VM’i derle + başlat ———
 for ((id=0; id<VM_TOTAL; id++)); do
     echo "[+] VM_ID=$id çekirdeği derleniyor…"
     $MAKE_CMD clean >/dev/null
-    $MAKE_CMD VM_ID=$id  >/dev/null
+    $MAKE_CMD VM_ID=$id >/dev/null
 
-    ELF="kernel_vm${id}.elf"
+    ELF="$TMPDIR/kernel_vm${id}.elf"
     mv kernel.elf "$ELF"
 
     TELNET_PORT=$((SERIAL_BASE + id))
@@ -62,4 +59,4 @@ for ((id=0; id<VM_TOTAL; id++)); do
 done
 
 echo "[✓] Tüm VM’ler başlatıldı.  Çıkmak için Ctrl-C."
-wait            # QEMU süreçleri bitene dek bekle
+wait   # QEMU süreçleri bitene dek bekle
