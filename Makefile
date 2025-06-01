@@ -1,49 +1,37 @@
-# ========== Ayarlar ==========
-TARGET = kernel
-ISO = burstkernel.iso
-BUILD = build
-SRC_ASM = boot/boot.S
-SRC_C = $(filter-out kernel/task.c, $(wildcard kernel/*.c))
-OBJ_ASM = $(BUILD)/boot.o
-OBJ_C = $(patsubst kernel/%.c,$(BUILD)/%.o,$(SRC_C))
-TASKPOOL_BIN = taskpool.bin
-TASKPOOL_OBJ = $(BUILD)/taskpool.o
-LINKER = linker.ld
+#───────────────────────────────────────────────────────────
+#  BurstKernel   –   kök Makefile
+#───────────────────────────────────────────────────────────
+CC      ?= i686-elf-gcc
+AS      ?= i686-elf-as
+LD      ?= i686-elf-ld
 
-# Derleyiciler
-CC = gcc
-LD = ld
-AS = gcc
-CFLAGS = -m32 -ffreestanding -O0 -Wall -Wextra -nostdlib
-LDFLAGS = -m elf_i386
+CFLAGS  = -ffreestanding -m32 -O2 -Wall -Wextra -Iinclude
+ASFLAGS = --32
+LDFLAGS = -T linker.ld -nostdlib -m elf_i386
 
-# ========== Kurallar ==========
-.PHONY: all clean run
+OBJS = \
+    boot/boot.o \
+    kernel/kmain.o \
+    kernel/pci.o \
+    kernel/e1000.o \
+    kernel/net.o \
+    kernel/serial.o \
+    kernel/string.o
 
-clean:
-	@rm -rf $(BUILD) $(TARGET).bin $(ISO) iso gen_taskpool taskpool.bin
+# Eğer eski kernel.c’yi kullanmayacaksanız listede tutmayın.
+# OBJS += kernel/kernel.o   ← ekler veya kaldırırsınız
 
-all: $(BUILD) $(OBJ_ASM) $(OBJ_C) $(TASKPOOL_OBJ)
-	$(LD) -m elf_i386 -T $(LINKER) -o $(TARGET).bin $(OBJ_ASM) $(OBJ_C) $(TASKPOOL_OBJ)
-	@mkdir -p iso/boot/grub
-	@cp $(TARGET).bin iso/boot/kernel
-	@cp boot/grub/grub.cfg iso/boot/grub
-	@grub-mkrescue -o $(ISO) iso
+all: kernel.elf
 
-$(BUILD):
-	@mkdir -p $(BUILD)
+boot/boot.o: boot/boot.S
+	$(AS) $(ASFLAGS) $< -o $@
 
-$(BUILD)/boot.o: $(SRC_ASM)
-	$(AS) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: kernel/%.c
+%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(TASKPOOL_OBJ): $(TASKPOOL_BIN)
-	$(LD) -m elf_i386 -r -b binary $(TASKPOOL_BIN) -o $(TASKPOOL_OBJ)
+kernel.elf: $(OBJS) linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
-$(TASKPOOL_BIN): gen_taskpool
-	@./gen_taskpool
+clean:
+	rm -f $(OBJS) kernel.elf
 
-gen_taskpool: gen_taskpool.c
-	$(CC) -o $@ $<

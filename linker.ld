@@ -2,29 +2,30 @@ ENTRY(_start)
 
 SECTIONS
 {
-  . = 0x100000;
+    . = 1M;
 
-  .multiboot : {
-    *(.multiboot)
-  }
+    .multiboot :
+    {
+        KEEP(*(.multiboot))
+    }
 
-  .text : {
-    *(.text)
-  }
+    .text :
+    {
+        *(.text*)
+    }
 
-  .rodata : {
-    *(.rodata*)
-  }
+    .rodata :
+    {
+        *(.rodata*)
+    }
 
-  .data : {
-    *(.data)
-  }
+    .data :
+    {
+        *(.data*)
+    }
 
-  .bss : {
-    *(.bss)
-    *(COMMON)
-  }
-      . = 0x200000;
-      .gen_taskpool : { *(.rodata.gen_taskpool_bin*) 
-      				*(.data.gen_taskpool_bin*) }
+    .bss :
+    {
+        *(.bss COMMON*)
+    }
 }

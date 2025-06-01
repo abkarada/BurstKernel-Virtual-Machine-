@@ -1,4 +1,3 @@
-#include <stdint.h>
 #include "pci.h"
 #include "net.h"
 
@@ -14,7 +13,12 @@ void kmain(void){
 		vga[i * 2] = msg[i];
 		vga[i * 2 + 1] = 0x0F;
 	}
-
+   uint8_t bus, slot, func;
+    if (pci_find_device(PCI_VENDOR_INTEL, PCI_DEVICE_E1000,
+                        &bus, &slot, &func) == 0) {
+        uint32_t bar0 = pci_read_bar(bus, slot, func, 0);
+        e1000_init(bar0);
+        
 	pci_scan();
 	
 	    init_vm_info(&vm, vm_id);
