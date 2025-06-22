@@ -1,263 +1,68 @@
-/*  ──────────────────────────────────────────────────────────
- *  kernel.c – Bare-metal E1000 TX test çekirdeği (32-bit)
- *  derle:  gcc -m32 -ffreestanding -c kernel.c -o kernel.o
- *  ──────────────────────────────────────────────────────────*/
+/*─────────────────────────────────────────────────────────────
+  kernel.c – Bare-metal (multiboot) E1000 24 K-Port UDP Burst
+  derle:
+      gcc -m32 -ffreestanding -nostdlib -std=gnu99 \
+          -fno-stack-protector -c kernel.c -o kernel.o
+─────────────────────────────────────────────────────────────*/
+
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h>
 
-typedef unsigned char      uint8_t;
-typedef unsigned short     uint16_t;
-typedef unsigned int       uint32_t;
+/* ───── Kullanıcı ayarları ─────────────────────────────── */
+#define SRC_IP         0x0A00020F     /* 10.0.2.15  (SLiRP varsayılan)  */
+#define SRC_PORT       55555
+#define DST_IP         0xC0A80101     /* 192.168.1.1  (örnek hedef)     */
+#define DST_PORT_BASE  10000
+#define BURST_COUNT    24000
 
-#define UDP_PROTO 17 /* RFC 768 */
+/* ───── Sabitler & Ring boyutu ─────────────────────────── */
+#define UDP_PROTO      17
+#define RING_SZ        1024           /* gerçek descriptor halkası */
+#define TX_BUF_SIZE    2048
 
-/* ── I/O port makroları ─────────────────────────────────── */
-static inline void outl(uint16_t port, uint32_t val)
-{ __asm__ volatile("outl %0, %1" : : "a"(val), "Nd"(port)); }
+/* ───── PCI & E1000 tanımları (kısaltılmış) ────────────── */
+#define PCI_CFG_ADDR   0xCF8
+#define PCI_CFG_DATA   0xCFC
+#define INTEL_VID      0x8086
+#define E1000_DID      0x100E
 
-static inline uint32_t inl(uint16_t port)
-{ uint32_t v; __asm__ volatile("inl %1, %0" : "=a"(v) : "Nd"(port)); return v; }
+#define TDBAL 0x03800
+#define TDBAH 0x03804
+#define TDLEN 0x03808
+#define TDH   0x03810
+#define TDT   0x03818
+#define TCTL  0x00400
+#define TIPG  0x00410
+#define TCTL_EN   (1<<1)
+#define TCTL_PSP  (1<<3)
+#define TCTL_CT(x)   ((x)<<4)
+#define TCTL_COLD(x) ((x)<<12)
 
-static inline uint8_t inb(uint16_t p)
-{ uint8_t v; __asm__ volatile("inb  %1,%0":"=a"(v):"Nd"(p)); return v; }
+/* ───── I/O & basit yardımcılar ────────────────────────── */
+static inline void outl (uint16_t p,uint32_t v){__asm__("outl %0,%1"::"a"(v),"Nd"(p));}
+static inline uint32_t inl(uint16_t p){uint32_t v;__asm__("inl %1,%0":"=a"(v):"Nd"(p));return v;}
+static inline uint8_t  inb(uint16_t p){uint8_t v;__asm__("inb %1,%0":"=a"(v):"Nd"(p));return v;}
+static inline void outb(uint16_t p,uint8_t v){__asm__("outb %0,%1"::"a"(v),"Nd"(p));}
 
-static inline void outb(uint16_t port, uint8_t val)
-{ __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port)); }
+static void *memcpy(void *d,const void *s,uint32_t n){uint8_t*D=d;const uint8_t*S=s;while(n--)*D++=*S++;return d;}
+static void *memset(void *d,int c,uint32_t n){uint8_t*D=d;while(n--)*D++=(uint8_t)c;return d;}
 
-/* ── Basit bellek yardımcıları (freestanding) ───────────── */
-void *memset(void *s, int c, uint32_t n)
-{ uint8_t *p = s; while (n--) *p++ = (uint8_t)c; return s; }
+static inline uint16_t htons(uint16_t v){return (v<<8)|(v>>8);}
+static inline uint32_t htonl(uint32_t v){return (v<<24)|(v>>24)|((v&0xFF00)<<8)|((v&0xFF0000)>>8);}
 
-void *memcpy(void *d, const void *s, uint32_t n)
-{ uint8_t *dst = d; const uint8_t *src = s; while (n--) *dst++ = *src++; return d; }
-
-/* ---------- Küçük ↔ Büyük endian dönüşümleri (libc yok) -------------- */
-static inline uint16_t htons(uint16_t v)
-{
-    return (uint16_t)((v << 8) | (v >> 8));
-}
-static inline uint32_t htonl(uint32_t v)
-{
-    return ((v & 0x000000FFU) << 24) |
-           ((v & 0x0000FF00U) <<  8) |
-           ((v & 0x00FF0000U) >>  8) |
-           ((v & 0xFF000000U) >> 24);
-}
-/* ntohs/ntohl eşdeğer — UDP/IP forge’de sadece gidiş yönü lazım */
-
-/* ---------------------- Basit memcpy’ler ----------------------------- */
-static void *memcpy8(void *dst, const void *src, uint32_t n)
-{
-    uint8_t *d = (uint8_t *)dst;
-    const uint8_t *s = (const uint8_t *)src;
-    while (n--) *d++ = *s++;
-    return dst;
-}
-
-/* ---------------------- Internet checksum ---------------------------- */
-static uint16_t checksum(const void *data, uint32_t len)
-{
-    const uint16_t *buf = (const uint16_t *)data;
-    uint32_t sum = 0;
-
-    while (len > 1) { sum += *buf++; len -= 2; }
-    if (len) sum += *(const uint8_t *)buf;
-
-    /* katla, tersle */
-    sum = (sum >> 16) + (sum & 0xFFFF);
-    sum += (sum >> 16);
-    return (uint16_t)(~sum);
-}
-/* ---------------------- Başlık yapıları ------------------------------ */
-typedef struct __attribute__((packed))
-{
-    uint32_t src_addr;
-    uint32_t dst_addr;
-    uint8_t  zero;
-    uint8_t  proto;
-    uint16_t udp_len;
-} pseudo_header;
-
-typedef struct __attribute__((packed))
-{
-    uint8_t  ver_ihl;      /* 0x45 => IPv4, 5*4 = 20 B header */
-    uint8_t  tos;
-    uint16_t total_len;
-    uint16_t id;
-    uint16_t frag_off;
-    uint8_t  ttl;
-    uint8_t  proto;
-    uint16_t hdr_cksum;
-    uint32_t src_ip;
-    uint32_t dst_ip;
-} ip_header;
-
-typedef struct __attribute__((packed))
-{
-    uint16_t src_port;
-    uint16_t dst_port;
-    uint16_t len;
-    uint16_t cksum;
-} udp_header;
-
-/* ---------------------- Ana forge fonksiyonu ------------------------- */
-/* packet_buf: 1500 B (MTU) civarı global/statik bellek ayır             */
-/* Dönen değer: paket bayt uzunluğu                                      */
-size_t forge_udp_packet(uint8_t  *packet_buf,
-                        uint32_t  src_ip,
-                        uint16_t  src_port,
-                        uint32_t  dst_ip,
-                        uint16_t  dst_port,
-                        const uint8_t *payload,
-                        uint32_t  payload_len)
-{
-    /* Konumla */
-    ip_header  *ip  = (ip_header *) packet_buf;
-    udp_header *udp = (udp_header *)(packet_buf + sizeof(ip_header));
-    uint8_t    *data= packet_buf + sizeof(ip_header) + sizeof(udp_header);
-
-    /* ---------------- UDP ---------------- */
-    udp->src_port = htons(src_port);
-    udp->dst_port = htons(dst_port);
-    udp->len      = htons((uint16_t)(sizeof(udp_header) + payload_len));
-    udp->cksum    = 0;            /* geçici */
-
-    /* ---------------- Payload ------------ */
-    if (payload_len)
-        memcpy8(data, payload, payload_len);
-
-    /* ---------------- IP ----------------- */
-    ip->ver_ihl   = 0x45;
-    ip->tos       = 0;
-    ip->total_len = htons((uint16_t)(sizeof(ip_header) + sizeof(udp_header) + payload_len));
-    ip->id        = htons(0x0000);        /* sabit veya artırılabilir      */
-    ip->frag_off  = htons(0x0000);        /* DF/fragment yok               */
-    ip->ttl       = 64;                   /* NAT’lar için yeterli          */
-    ip->proto     = UDP_PROTO;
-    ip->hdr_cksum = 0;                    /* önce 0                         */
-    ip->src_ip    = htonl(src_ip);
-    ip->dst_ip    = htonl(dst_ip);
-
-    /* IP checksum */
-    ip->hdr_cksum = checksum(ip, sizeof(ip_header));
-
-    /* ---------------- UDP checksum (pseudo) */
-    pseudo_header ph;
-    ph.src_addr = htonl(src_ip);
-    ph.dst_addr = htonl(dst_ip);
-    ph.zero     = 0;
-    ph.proto    = UDP_PROTO;
-    ph.udp_len  = udp->len;               /* zaten network byte-order’de   */
-
-    /* geçici alan: pseudo + udp + payload */
-    const uint32_t pseudo_len = sizeof(pseudo_header) +
-                                sizeof(udp_header) + payload_len;
-    uint8_t temp[pseudo_len];             /* 1-2 KiB stack’in yeter        */
-
-    memcpy8(temp, &ph, sizeof(pseudo_header));
-    memcpy8(temp + sizeof(pseudo_header), udp,
-            sizeof(udp_header) + payload_len);
-
-    uint16_t u_ck = checksum(temp, pseudo_len);
-    udp->cksum = u_ck ? u_ck : 0xFFFF;    /* RFC: checksum=0 ⇒ “hesaplanmadı” */
-
-    return sizeof(ip_header) + sizeof(udp_header) + payload_len;
+/* ───── Internet checksum ──────────────────────────────── */
+static uint16_t cksum(const void *d,uint32_t l){
+    const uint16_t *b=d; uint32_t s=0;
+    while(l>1){s+=*b++;l-=2;} if(l)s+=*(uint8_t*)b;
+    s=(s>>16)+(s&0xFFFF); s+=(s>>16); return (uint16_t)~s;
 }
 
-/* MAC’leri elle ver veya  ff:ff:ff:ff:ff:ff  broadcast kullan */
-static size_t forge_eth_udp(uint8_t *p,
-                             const uint8_t dst_mac[6],
-                             const uint8_t src_mac[6],
-                             uint32_t sip, uint16_t sport,
-                             uint32_t dip, uint16_t dport,
-                             const uint8_t *pl, uint32_t plen)
-{
-    /* 1) Ethernet header */
-    memcpy8(p, dst_mac, 6);
-    memcpy8(p+6, src_mac, 6);
-    p[12]=0x08; p[13]=0x00;            /* EtherType IPv4 */
+/* ───── VGA mini-logger (basit) ─────────────────────────── */
+static volatile uint8_t *vga=(uint8_t*)0xB8000; static uint16_t cur=0;
+static void puts(const char *s){while(*s){vga[cur++]=*s++;vga[cur++]=0x07;if(cur>=80*25*2)cur=0;}}
 
-    /* 2) IP+UDP forge çağrısı hemen arkasından */
-    size_t l = forge_udp_packet(p+14, sip,sport,dip,dport,pl,plen);
-
-    /* 3) Min-Ethernet boyu (60) yakala */
-    size_t frame_len = 14 + l;
-    if (frame_len < 60) {
-        memset(p+frame_len, 0, 60-frame_len);
-        frame_len = 60;
-    }
-    return frame_len;
-}
-
-/* ── VGA debug çıktısı ──────────────────────────────────── */
-volatile uint8_t *vga = (volatile uint8_t *)0xB8000;
-uint16_t cursor_pos = 0;
-
-void ft_putchar(char c)
-{ vga[cursor_pos++] = c; vga[cursor_pos++] = 0x07; }
-
-void ft_putstr(const char *s)
-{ while (*s) ft_putchar(*s++); }
-
-void ft_puthex(uint32_t v)
-{
-    const char *hex = "0123456789ABCDEF";
-    ft_putstr("0x");
-    for (int i = 7; i >= 0; --i)
-        ft_putchar(hex[(v >> (i * 4)) & 0xF]);
-}
-/* ── PCI temel sabitleri ────────────────────────────────── */
-#define PCI_CFG_ADDR 0xCF8
-#define PCI_CFG_DATA 0xCFC
-#define PCI_VENDOR   0x00
-#define PCI_DEVICE   0x02
-
-uint32_t pci_read32(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off)
-{
-    uint32_t addr = (1u << 31) | (bus << 16) | (dev << 11)
-                  | (fn << 8) | (off & 0xFC);
-    outl(PCI_CFG_ADDR, addr);
-    return inl(PCI_CFG_DATA);
-}
-
-uint16_t pci_read16(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off)
-{ uint32_t d = pci_read32(bus, dev, fn, off); return (d >> ((off & 2) * 8)) & 0xFFFF; }
-
-void  pci_write16(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off, uint16_t v)
-{
-    uint32_t addr = (1u << 31) | (bus << 16) | (dev << 11)
-                  | (fn << 8) | (off & 0xFC);
-    outl(PCI_CFG_ADDR, addr);
-    outl(PCI_CFG_DATA + (off & 2), v);
-}
-
-/* ── E1000 sabitleri ───────────────────────────────────── */
-#define INTEL_VID 0x8086
-#define E1000_DID 0x100E
-#define E1000_IMC 0x00D8   /* Interrupt Mask Clear */
-#define E1000_ICR   0x00C0   /* Interrupt Cause Read */
-
-#define NUM_TX_DESC   8
-#define TX_BUF_SIZE   2048
-#define V2P(v)  ((uint32_t)(uintptr_t)(v))
-
-/* MMIO offset’leri */
-#define TDBAL   0x03800
-#define TDBAH   0x03804
-#define TDLEN   0x03808
-#define TDH     0x03810
-#define TDT     0x03818
-#define TCTL    0x00400
-#define TIPG    0x00410
-
-#define TCTL_EN     (1<<1)
-#define TCTL_PSP    (1<<3)
-#define TCTL_CT(x)  ((x)<<4)
-#define TCTL_COLD(x)((x)<<12)
-
-/* TX descriptor yapısı */
-struct tx_desc {
+/* ───── TX descriptor & ring belleği ───────────────────── */
+struct tx_desc{
     uint64_t buf;
     uint16_t len;
     uint8_t  cso;
@@ -265,122 +70,136 @@ struct tx_desc {
     uint8_t  status;
     uint8_t  css;
     uint16_t special;
-} __attribute__((aligned(16)));
+}__attribute__((aligned(16)));
 
-static struct tx_desc tx_ring[NUM_TX_DESC] __attribute__((aligned(16)));
-static uint8_t tx_buf[NUM_TX_DESC][TX_BUF_SIZE] __attribute__((aligned(16)));
+static struct tx_desc tx_ring[RING_SZ]          __attribute__((aligned(16)));
+static uint8_t        tx_buf [RING_SZ][TX_BUF_SIZE] __attribute__((aligned(16)));
+static uint32_t tdt=0;
 
-/* ── Ring başlat ────────────────────────────────────────── */
-void tx_ring_init(void)
+/* ───── Forge UDP/IP/Eth paketleri ─────────────────────── */
+static size_t forge_eth_udp(uint8_t *f,
+        const uint8_t dst_mac[6],const uint8_t src_mac[6],
+        uint32_t sip,uint16_t sport,uint32_t dip,uint16_t dport,
+        const uint8_t *payload,uint32_t plen)
 {
-    for (int i = 0; i < NUM_TX_DESC; ++i) {
-        memset(&tx_ring[i], 0, sizeof(struct tx_desc));
-        tx_ring[i].buf    = V2P(tx_buf[i]);
-        tx_ring[i].status = 1;          /* DD = boş */
+    /* Ethernet header */
+    memcpy(f,dst_mac,6); memcpy(f+6,src_mac,6); f[12]=0x08; f[13]=0x00;
+
+    /* IP – 20 B */
+    uint8_t *ip=f+14;
+    ip[0]=0x45; ip[1]=0;                          /* ver/ihl, TOS */
+    uint16_t tot=htons(20+8+plen); memcpy(ip+2,&tot,2);
+    ip[4]=ip[5]=0;                                /* id */
+    ip[6]=ip[7]=0;                                /* flags/frag */
+    ip[8]=64; ip[9]=UDP_PROTO;
+    ip[10]=ip[11]=0;                              /* checksum placeholder */
+    uint32_t s=htonl(sip),d=htonl(dip);
+    memcpy(ip+12,&s,4); memcpy(ip+16,&d,4);
+
+    /* UDP – 8 B */
+    uint8_t *udp=ip+20;
+    uint16_t sp=htons(sport),dp=htons(dport),ul=htons(8+plen);
+    memcpy(udp,&sp,2); memcpy(udp+2,&dp,2); memcpy(udp+4,&ul,2); udp[6]=udp[7]=0;
+
+    /* payload */
+    memcpy(udp+8,payload,plen);
+
+    /* IP checksum */
+    uint16_t ipck=cksum(ip,20); memcpy(ip+10,&ipck,2);
+
+    /* UDP pseudo-header checksum */
+    struct{uint32_t s,d;uint8_t z,p;uint16_t l;}__attribute__((packed)) ph=
+        {htonl(sip),htonl(dip),0,UDP_PROTO,ul};
+    uint8_t tmp[sizeof(ph)+8+plen];
+    memcpy(tmp,&ph,sizeof(ph));
+    memcpy(tmp+sizeof(ph),udp,8+plen);
+    uint16_t uck=cksum(tmp,sizeof(tmp)); if(!uck) uck=0xFFFF;
+    memcpy(udp+6,&uck,2);
+
+    size_t frame=14+20+8+plen; if(frame<60){memset(f+frame,0,60-frame); frame=60;}
+    return frame;
+}
+
+/* ───── Ring başlat & RS işaretleme ────────────────────── */
+static void tx_ring_init(void){
+    for(int i=0;i<RING_SZ;i++){
+        memset(&tx_ring[i],0,sizeof(struct tx_desc));
+        tx_ring[i].buf=(uint32_t)(uintptr_t)tx_buf[i];
+        tx_ring[i].status=1;
     }
+    for(int i=255;i<RING_SZ;i+=256) tx_ring[i].cmd|=(1<<3); /* RS */
 }
 
-/* ── E1000’i TX için hazırla ───────────────────────────── */
-void e1000_init_tx(volatile uint32_t *mmio)
-{
-    mmio[TDBAL/4] = V2P(tx_ring);
-    mmio[TDBAH/4] = 0;
-    mmio[TDLEN/4] = NUM_TX_DESC * sizeof(struct tx_desc);
-    mmio[TDH  /4] = 0;
-    mmio[TDT  /4] = 0;
-
-    mmio[TCTL/4] = TCTL_EN | TCTL_PSP | TCTL_CT(0x10) | TCTL_COLD(0x40);
-    mmio[TIPG/4] = 0x0060200;
-
-    mmio[E1000_IMC / 4] = 0xFFFFFFFF;   /* bütün kesmeleri kapat */
-    (void)mmio[E1000_ICR/4];          /* read-to-clear */
+/* ───── Kart bul & başlat (kısaltılmış) ───────────────── */
+static uint32_t pci_read32(uint8_t bus,uint8_t dev,uint8_t fn,uint8_t off){
+    uint32_t a=(1u<<31)|(bus<<16)|(dev<<11)|(fn<<8)|(off&0xFC);
+    outl(PCI_CFG_ADDR,a); return inl(PCI_CFG_DATA);
+}
+static uint16_t pci_read16(uint8_t b,uint8_t d,uint8_t f,uint8_t off){
+    uint32_t v=pci_read32(b,d,f,off); return (v>>( (off&2)*8))&0xFFFF;
+}
+static void pci_write16(uint8_t b,uint8_t d,uint8_t f,uint8_t off,uint16_t v){
+    uint32_t a=(1u<<31)|(b<<16)|(d<<11)|(f<<8)|(off&0xFC);
+    outl(PCI_CFG_ADDR,a); outl(PCI_CFG_DATA+(off&2),v);
 }
 
-/* ── Tek paket gönder ──────────────────────────────────── */
-void e1000_send(const void *pkt, uint16_t len, volatile uint32_t *mmio)
-{
-    uint32_t cur = mmio[TDT/4];
-    if (len < 60) {                      /* min Ethernet boyu */
-        memcpy(tx_buf[cur], pkt, len);
-        memset(tx_buf[cur]+len, 0, 60-len);
-        len = 60;
-    } else {
-        memcpy(tx_buf[cur], pkt, len);
-    }
-
-    tx_ring[cur].len    = len;
-    tx_ring[cur].cmd    = 0b10011;        /* EOP|IFCS|RS */
-    tx_ring[cur].status = 0;
-
-    mmio[TDT/4] = (cur + 1) % NUM_TX_DESC;
-
-    while (!(tx_ring[cur].status & 1)) ; /* DD bekle */
-    ft_putstr("TX OK\n");
-}
-
-/* ── PCI’de E1000 bul, MMIO’sunu döndür ────────────────── */
-volatile uint32_t *find_e1000(void)
-{
-    for (uint8_t b=0;b<256;b++)
-        for (uint8_t d=0;d<32;d++) {
-            uint16_t vid = pci_read16(b,d,0,PCI_VENDOR);
-            uint16_t did = pci_read16(b,d,0,PCI_DEVICE);
-            if (vid==INTEL_VID && did==E1000_DID) {
-                /* Bus-master + mem enable */
-                uint16_t cmd = pci_read16(b,d,0,0x04);
-                cmd |= (1<<2)|(1<<1);
-                pci_write16(b,d,0,0x04,cmd);
-
-                uint32_t bar0 = pci_read32(b,d,0,0x10);
-                return (volatile uint32_t*)(bar0 & 0xFFFFFFF0);
-            }
-        }
+static volatile uint32_t *find_e1000(void){
+    for(uint8_t b=0;b<256;b++)for(uint8_t d=0;d<32;d++){
+        if(pci_read16(b,d,0,0)==INTEL_VID && pci_read16(b,d,0,2)==E1000_DID){
+            uint16_t cmd=pci_read16(b,d,0,4); cmd|=(1<<2)|(1<<1);
+            pci_write16(b,d,0,4,cmd);
+            uint32_t bar=pci_read32(b,d,0,0x10)&0xFFFFFFF0;
+            return (volatile uint32_t*)bar;
+        }}
     return 0;
 }
-/* ── Çekirdek giriş noktası ────────────────────────────── */
-void kmain(void)
-{
-__asm__ volatile ("cli");          /* IF = 0              */
+static void e1000_init_tx(volatile uint32_t *m){
+    m[TDBAL/4]=(uint32_t)(uintptr_t)tx_ring; m[TDBAH/4]=0;
+    m[TDLEN/4]=RING_SZ*sizeof(struct tx_desc);
+    m[TDH/4]=m[TDT/4]=0;
+    m[TCTL/4]=TCTL_EN|TCTL_PSP|TCTL_CT(0x10)|TCTL_COLD(0x40);
+    m[TIPG/4]=0x0060200;
+}
 
-/* 0x70 portu: bit7=1 → NMI MASK */
-uint8_t prev = inb(0x70);
-outb(0x70, prev | 0x80);           /* NMI kapandı         */
-
-outb(0x21, 0xFF);                  /* PIC master mask     */
-outb(0xA1, 0xFF);     
- 
-    ft_putstr("BurstLab!\n");
-
-    volatile uint32_t *mmio = find_e1000();
-    if (!mmio) {
-        ft_putstr("NIC not found\n");
-        for(;;)__asm__("hlt");
+/* ───── Blok gönderim ─────────────────────────────────── */
+static inline int desc_free(uint32_t idx){ return tx_ring[idx].status&1; }
+static void e1000_send_block(const uint8_t *buf,uint16_t len,volatile uint32_t *m){
+    uint32_t n=0;
+    while(n<RING_SZ && desc_free(tdt)){
+        memcpy(tx_buf[tdt],buf,len);
+        tx_ring[tdt].len=len;
+        tx_ring[tdt].cmd=0b00000011;           /* EOP|IFCS (RS aralarda var) */
+        tx_ring[tdt].status=0;
+        tdt=(tdt+1)&(RING_SZ-1); ++n;
     }
-    ft_putstr("E1000 detected\n");
+    m[TDT/4]=tdt;
+}
+
+/* ───── kernel main ───────────────────────────────────── */
+void kmain(void){
+    __asm__("cli");
+    outb(0x21,0xFF); outb(0xA1,0xFF);             /* IRQ maskli */
+    puts("BurstLab\n");
+
+    volatile uint32_t *mmio=find_e1000();
+    if(!mmio){ puts("NIC?"); for(;;)__asm__("hlt"); }
+    puts("E1000 OK\n");
 
     tx_ring_init();
     e1000_init_tx(mmio);
 
-	static uint8_t pkt[1500] __attribute__((aligned(16)));
+    static uint8_t frame[1500] __attribute__((aligned(16)));
+    const uint8_t bcast[6]={0xff,0xff,0xff,0xff,0xff,0xff};
+    const uint8_t mymac[6]={0x02,0x00,0x00,0x00,0x00,0x01};
 
-	static const uint8_t bcast[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
-	static const uint8_t mymac[6] = {0x02,0x00,0x00,0x00,0x00,0x01};
-
-for (uint16_t i = 0; i < 24000; ++i) {
-    uint16_t dst_port = 10000 + i;
-
-    size_t len = forge_eth_udp(pkt,
-                                bcast, mymac,
-                                0x0A000001, 55555,
-                                0xC0A80101, dst_port,
-                                (uint8_t*)"BURST", 5);
-
-    e1000_send(pkt, len, mmio);
-}
-    ft_putstr("All packets sent\n");
-
-
-
-
+    for(uint32_t i=0;i<BURST_COUNT;i++){
+        uint16_t dstp=DST_PORT_BASE+i;
+        size_t len=forge_eth_udp(frame,bcast,mymac,
+                                 SRC_IP,SRC_PORT,
+                                 DST_IP,dstp,
+                                 (uint8_t*)"BURST",5);
+        e1000_send_block(frame,(uint16_t)len,mmio);
+    }
+    puts("24k burst done\n");
     for(;;)__asm__("hlt");
 }
