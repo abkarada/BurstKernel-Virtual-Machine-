@@ -366,15 +366,20 @@ outb(0xA1, 0xFF);
 	static const uint8_t bcast[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
 	static const uint8_t mymac[6] = {0x02,0x00,0x00,0x00,0x00,0x01};
 
-	size_t len = forge_eth_udp(pkt,
-                            bcast, mymac,
-                            0x0A000001, 55555,
-                            0xC0A80101, 12345,
-                            (uint8_t*)"BURST", 5);
+for (uint16_t i = 0; i < 24000; ++i) {
+    uint16_t dst_port = 10000 + i;
 
-	e1000_send(pkt, len, mmio);
+    size_t len = forge_eth_udp(pkt,
+                                bcast, mymac,
+                                0x0A000001, 55555,
+                                0xC0A80101, dst_port,
+                                (uint8_t*)"BURST", 5);
 
-	__asm__ volatile ("sti");   /* tüm IRQ’ları kapat */
+    e1000_send(pkt, len, mmio);
+}
+    ft_putstr("All packets sent\n");
+
+
 
 
     for(;;)__asm__("hlt");
