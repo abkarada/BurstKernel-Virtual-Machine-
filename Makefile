@@ -1,53 +1,57 @@
-#───────────────────────────────────────────────────────────
-#  BurstKernel  –  kök Makefile (i686 ELF cross-toolchain)
-#───────────────────────────────────────────────────────────
+# ----------------------------- Build targets -----------------------------
+#   make            -> derle + ISO üret
+#   make run        -> QEMU’da önyükle
+#   make clean      -> tüm çıktıları sil
+# -------------------------------------------------------------------------
 
-# Derleyiciler
-CC      ?= i686-elf-gcc
-AS      ?= i686-elf-as
-LD      ?= i686-elf-ld
+.PHONY : all run clean
 
-# Ortak bayraklar
-CFLAGS  = -ffreestanding -m32 -O2 -Wall -Wextra -Iinclude
-ASFLAGS = --32
-LDFLAGS = -T linker.ld -nostdlib -m elf_i386
+# ---------- Temel dosya isimleri ----------
+ISO         := kernel.iso
+ELF         := kernel.elf
+OBJS        := boot.o kernel.o
+LINKER      := linker.ld
+GRUBCFG     := grub.cfg
+ISODIR      := isodir/boot
+GRUBDIR     := $(ISODIR)/grub
 
-# VM kimliği derleme sırasında “make VM_ID=17” şeklinde geçilir
-VM_ID   ?= 0
-CFLAGS += -DVM_ID=$(VM_ID)
+# ---------- Varsayılan hedef ----------
+all : $(ISO)
 
-# Derlenecek nesneler
-OBJS = \
-    boot/boot.o \
-    kernel/kmain.o \
-    kernel/pci.o \
-    kernel/e1000.o \
-    kernel/task.o \
-    kernel/serial.o \
-    kernel/string.o
+# ---------- Assemble boot.s ----------
+boot.o : boot.s
+	@echo "[AS]  $@"
+	as --32 $< -o $@
 
-# Eğer “net.c” hâlâ kullanılıyorsa ekle; yoksa liste dışı bırak
-# OBJS += kernel/net.o
+# ---------- Compile kernel.c ----------
+kernel.o : kernel.c
+	@echo "[CC]  $@"
+	gcc -m32 -ffreestanding -nostdlib -fno-stack-protector \
+	    -std=gnu99 -c $< -o $@
 
-# Varsayılan hedef
-all: kernel.elf
+# ---------- Link ELF ----------
+$(ELF) : $(LINKER) $(OBJS)
+	@echo "[LD]  $@"
+	ld -m elf_i386 -T $(LINKER) $(OBJS) -o $@
 
-#────────── Nesne kuralları ──────────
-boot/boot.o: boot/boot.S
-	$(AS) $(ASFLAGS) -o $@ $<
+# ---------- Build GRUB ISO ----------
+$(ISO) : $(ELF) $(GRUBCFG)
+	@echo "[ISO] $@"
+	@mkdir -p $(GRUBDIR)
+	cp $(ELF)      $(ISODIR)/
+	cp $(GRUBCFG)  $(GRUBDIR)/
+	grub-mkrescue -o $@ isodir 2>/dev/null
 
-# Tüm *.c dosyaları için
-%.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+# ---------- QEMU çalıştır ----------
+run : $(ISO)
+	qemu-system-i386 \
+	  -m 128M \
+	  -netdev user,id=n0 \
+	  -device e1000,netdev=n0 \
+	  -cdrom  $(ISO) \
+	  -serial stdio -no-reboot
 
-#────────── Bağlama ──────────────────
-kernel.elf: $(OBJS) linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+# ---------- Temizlik ----------
+clean :
+	rm -rf $(OBJS) $(ELF) $(ISO) isodir
 
-# (İstersen ELF’ten ham binary çıkar)
-kernel.bin: kernel.elf
-	i686-elf-objcopy -O binary $< $@
-
-# Temizlik
-clean:
-	rm -f $(OBJS) kernel.elf kernel.bin
