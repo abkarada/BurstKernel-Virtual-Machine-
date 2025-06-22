@@ -52,7 +52,7 @@ for ((id=0; id<VM_TOTAL; id++)); do
       -machine pc,accel=kvm,memory-backend=ram0 \
       -kernel "$ELF" \
       -nographic \
-      -serial telnet:127.0.0.1:"$TELNET_PORT",server,nowait \
+      -serial telnet:127.0.0.1:${PORT},server,nowait,mux=on \
       -device e1000 \
       &
     PIDS+=($!)
