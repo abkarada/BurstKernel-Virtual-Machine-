@@ -1,62 +1,63 @@
-# 🔥 burstkernel - Minimal Microkernel for NATGhost UDP Burst
+# NKernel (Network Kernel) 🚀
 
-**burstkernel** is a lightweight microkernel designed for the [NATGhost](https://github.com/yourusername/natghost) project. Its sole purpose is to automatically send high-speed UDP bursts during system boot, without requiring any user interaction. This kernel is optimized for NAT traversal experiments and high-throughput packet injection.
+*A simple, lightweight, and fun side-project exploring unikernel architecture for high-speed packet routing.*
 
----
+## The Story: From BurstKernel to NKernel
+This project started as **BurstKernel**, a Linux kernel module born out of a very specific networking necessity: **NAT Traversal**.
 
-## 🚀 Purpose
+As detailed in the [NATGhost Algorithm Report](NATGhost_Algorithm_Report.md), traversing Double-Symmetric NATs without a relay (TURN server) requires aggressive port prediction and UDP hole punching. To achieve a high probability of success (rather than a mere 52%), a peer needs to open over 10,000 sockets and send packets almost simultaneously. 
 
-- Automatically launches on boot and sends UDP bursts.
-- Scans PCI to detect the network interface (e.g., Intel E1000).
-- Uses MMIO to directly control the NIC without an operating system.
-- Sends UDP packets to a predefined target IP and port range.
-- Ideal for NAT hole punching and symmetric NAT testing scenarios.
-- Designed to run in thousands of parallel VMs with minimal overhead.
+However, doing this through standard Operating System syscalls (`socket()`, `bind()`, `sendto()`) incurs massive overhead. By the time the 10,000th packet is sent via the Linux kernel, the stateful firewall rules for the first packets have already timed out (firewalls typically give you just a few seconds). 
 
----
+To solve this, we needed to bypass the OS completely. We needed to blast packets at the physical limit of the Gigabit link (no syscalls, no interrupts, no context switching). That was the goal of **BurstKernel**.
 
-## 🧠 Architecture
+As the project evolved, we realized this architecture was essentially a minimal Unikernel. We decided to transition it into **NKernel**—a standalone, bare-metal router. It strips away file systems, POSIX compliance, and standard libraries to focus purely on one thing: **moving packets extremely fast.**
 
-├── boot/
-│ └── boot.S # Multiboot-compliant bootloader stub
-├── kernel/
-│ ├── kernel.c # Main kernel logic and entry point
-│ ├── pci.c # PCI scanner to locate the NIC
-│ ├── e1000.c # MMIO-based Intel E1000 NIC driver
-│ ├── burst.c # High-speed UDP packet blaster
-│ └── config.h # Compile-time configuration (target IP/port)
-├── build/ # Compiled object files
-├── Makefile # Build instructions
-└── README.md # Project documentation
+*Note: This is purely a fun, experimental side-project. It's an exploration of how OS kernels and network stacks work under the hood.*
 
-🧪 Testing with QEMU
+## Features
+- **No Underlying OS:** Boots directly on bare metal or hypervisors (QEMU/KVM/Proxmox).
+- **Zero-Copy Routing:** Bypasses standard OS network stacks.
+- **Virtual File System (VFS):** No FAT32 or EXT4. Configurations are written directly to raw ATA disk sectors.
+- **Built-in CLI:** A colorful, Zsh-like command line interface (Omarchy style).
+- **Remote Management (Telnet):** Manage the router remotely via Port 23.
 
-qemu-system-i386 -cdrom kernel.iso -nographic
-Or, to simulate a real NIC environment:
-qemu-system-i386 -cdrom kernel.iso -device e1000 -netdev user,id=n1 -device e1000,netdev=n1
+## How to Run (QEMU)
 
-Testing with VirtualBox
-Create a new VM (32-bit, 64MB RAM is enough).
+If you have `gcc`, `make`, and `qemu-system-x86_64` installed on your Linux/macOS machine, running NKernel is incredibly simple:
 
-Set Network Adapter to Bridged Adapter or Host-only Adapter.
+```bash
+make slirp
+```
 
-Attach kernel.iso to the virtual CD/DVD drive.
+This command will:
+1. Compile the kernel (`nostdlib`, freestanding).
+2. Create a 1MB virtual hard disk (`config.img`) for raw sector storage if it doesn't exist.
+3. Launch QEMU with a graphical VGA window.
+4. Set up two E1000 Gigabit network interfaces.
+5. Forward host port `2323` to guest port `23` for Telnet access.
 
-Boot the machine – packet blasting starts immediately.
+### Accessing the CLI Remotely
+While QEMU is running, you can connect to the router from your host machine:
+```bash
+telnet 127.0.0.1 2323
+```
 
+### Basic Commands
+Once the CLI is open (either via QEMU's VGA or Telnet), you can try:
+- `help`: Lists available commands.
+- `ifconfig`: Displays the NICs, MAC addresses, and Link Status.
+- `route print`: Displays the fast-path routing table.
+- `ls`: Lists the virtual files (e.g., `running-config`, `startup-config`).
+- `cat startup-config`: Reads the routing table saved directly on the ATA disk.
+- `save`: Writes your current configuration to the raw ATA disk sectors.
+- `load`: Loads the configuration from the disk.
 
-Configuration
-#define TARGET_IP   0xC0A80001  // 192.168.0.1
-#define START_PORT  10000
-#define END_PORT    20000
+## Architecture
+- **Language:** C (GNU C99) and x86 Assembly.
+- **Target:** x86_64 (64-bit Long Mode).
+- **Network Stack:** A highly optimized polling driver for Intel E1000 NICs, integrated with `lwIP` (Lightweight IP) for TCP/Telnet support.
+- **Storage:** Custom ATA PIO driver reading/writing raw sectors.
 
-Then rebuild:
-make clean && make all
-
-
-Advanced Usage
-This project is part of the NATGhost framework, which aims to:
-Dynamically test NAT traversal capabilities.
-Analyze port allocation randomness.
-Perform coordinated bursts across thousands of VMs.
-
+## License
+MIT License. Feel free to explore, break, and learn from it!
