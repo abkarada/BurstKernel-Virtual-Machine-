@@ -6,6 +6,8 @@ static volatile uint16_t *vga = (uint16_t*)0xB8000;
 static uint16_t cursor = 0;
 static uint8_t current_color = 0x0F; // Default: White on Black
 
+static void serial_write(char a);
+
 void clear_screen(void) {
     for (int i = 0; i < 80*25; i++) vga[i] = 0x0F00;
     cursor = 0;
@@ -17,8 +19,6 @@ void clear_screen(void) {
 void set_color(uint8_t fg, uint8_t bg) {
     current_color = (bg << 4) | (fg & 0x0F);
 }
-
-static void serial_write(char a);
 
 void puts(const char *s) {
     while (*s) {

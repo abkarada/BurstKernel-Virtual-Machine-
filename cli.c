@@ -2,6 +2,7 @@
 #include "libc.h"
 #include "e1000.h"
 #include "nat.h"
+#include "kernel.h"
 
 extern void puts(const char *s);
 extern void puts_serial(const char *s);
