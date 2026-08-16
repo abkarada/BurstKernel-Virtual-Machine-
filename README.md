@@ -1,33 +1,61 @@
 # NKernel
 
-NKernel, NAT Traversal (Ağ Adresi Çevirisi Geçişi) problemlerini çözmek amacıyla ortaya çıkmış eğlenceli bir "side-project" (yan proje) unikernel denemesidir. 
+NKernel is an experimental, bare-metal unikernel/router designed as a fun side-project. Its original purpose was to overcome NAT Traversal issues by implementing the NATGhost algorithm without the overhead of standard operating system mechanics like context-switching and system calls. 
 
-Başlangıçta "BurstKernel" adıyla, yüksek hızlı paket yönlendirmesi yapabilen bağımsız bir çekirdek (kernel) modülü olarak tasarlandı. Amacı; standart işletim sistemlerindeki sistem çağrıları (syscall), kesmeler (interrupt) ve bağlam değiştirme (context-switch) gibi zaman maliyetlerini aradan çıkararak, karşılıklı simetrik NAT senaryolarında NATGhost algoritmasını uygulayabilmekti.
+It runs directly on x86_64 hardware as an independent kernel, providing a fast-path NAT engine and a built-in CLI environment.
 
-Projenin teknik arka planını ve neden böyle bir mimariye (doğrudan bare-metal'de çalışmaya) ihtiyaç duyulduğunu detaylarıyla asıl raporda bulabilirsiniz:
-- [NATGhost Algoritma Raporu (Orijinal DOCX)](NATGhost_Algoritma_Raporu.docx)
+For the theoretical background of the NATGhost algorithm, please refer to the original reports:
 - [NATGhost Algorithm Report (English MD)](NATGhost_Algorithm_Report.md)
+- [NATGhost Algoritma Raporu (Orijinal DOCX)](NATGhost_Algoritma_Raporu.docx)
 
-Zamanla proje, temel düzeyde IP ve Port çevirisi (NAT) yapabilen, CLI ekranına sahip kendi halinde basit bir bare-metal router'a (yönlendiriciye) evrildi.
+## Features
+- **Bare-Metal:** Runs independently, without relying on Linux or any other host OS.
+- **NAT Engine:** Performs fast IP and Port translation natively.
+- **Built-in CLI & Telnet:** Includes a fully functional colored command-line interface, a virtual file system (VFS) in RAM, an integrated text editor (`edit`), and Telnet access on port 23.
+- **Network Topology (`ntop`):** Visualizes connected LAN hosts directly from the NAT table in a simple ASCII format.
+- **Raw Storage:** Saves configuration directly to raw sectors of an ATA disk without needing complex filesystems like FAT32 or EXT4.
 
-## Temel İçerik
-- **Bağımsız Çalışma:** Herhangi bir işletim sistemine (Linux vb.) bağımlı değildir. Doğrudan bare-metal (veya QEMU) üzerinde kendi başına boot edilir.
-- **NAT (Ağ Adresi Çevirisi):** Fast-Path mekanizması ile paketlerin IP ve Port değerlerini kendi içinde çevirip Checksum hesaplamalarını donanıma yakın seviyede halleder.
-- **ntop Komutu:** Ağa bağlanan LAN cihazlarını NAT tablosundan okuyup basit bir ASCII topoloji haritası çizer.
-- **CLI & Telnet:** Kendine ait renkli bir komut satırı arayüzü vardır. 23. porttan Telnet ile dışarıdan da bağlanılabilir.
-- **Dosya Sistemsiz Depolama:** FAT32/EXT4 kullanmaz. Ayarları saklamak için `config.img` diskinin 1. sektörüne doğrudan ham (raw) yazma/okuma işlemi yapar (`save` ve `load` komutları ile).
+## Running in QEMU (Testing)
 
-## Çalıştırma (QEMU)
-
-Projeyi denemek isterseniz sisteminizde `gcc`, `make` ve `qemu-system-x86_64` yüklü olmalıdır.
+To try it out in a virtual machine, you will need `gcc`, `make`, and `qemu-system-x86_64`.
 
 ```bash
 make slirp
 ```
 
-Bu komut:
-1. Kaynak kodları (`nostdlib` formatında) derler.
-2. Ayarların tutulacağı 1MB'lık `config.img` sanal diskini oluşturur (eğer henüz yoksa).
-3. QEMU'yu başlatır ve Telnet için 23. portu bilgisayarınızın 2323. portuna bağlar.
+This will:
+1. Compile the kernel (`nostdlib`).
+2. Create a 1MB `config.img` virtual disk for storage.
+3. Launch QEMU and map the Telnet port to `2323` on your host.
 
-Sistem açıldığında `help` yazarak kullanabileceğiniz komutları (örn: `ifconfig`, `ntop`, `clear`, `ls`, `exit`) görebilirsiniz. Dilerseniz kendi terminalinizden `telnet 127.0.0.1 2323` yazarak router'a uzaktan da bağlanabilirsiniz.
+Once booted, type `help` to see the available commands. You can also connect remotely by running `telnet 127.0.0.1 2323` from your host machine.
+
+## Installing on Real Hardware (Bare Metal)
+
+NKernel is Multiboot compliant, which means it can be booted by standard bootloaders like GRUB.
+
+1. **Compile the Kernel:**
+   Run `make` to compile the source code into `kernel.elf`.
+
+2. **Prepare a Bootable USB/Disk:**
+   You can use GRUB to boot `kernel.elf`. A basic `grub.cfg` might look like this:
+   ```
+   menuentry "NKernel" {
+       multiboot /boot/kernel.elf
+       boot
+   }
+   ```
+   
+3. **Generate an ISO:**
+   If you have `grub-mkrescue` and `xorriso` installed, you can generate a bootable ISO image:
+   ```bash
+   make iso
+   ```
+   This will produce `nkernel.iso` which can be flashed to a USB drive using tools like `dd` or Rufus.
+   ```bash
+   sudo dd if=nkernel.iso of=/dev/sdX bs=4M status=progress
+   ```
+   *(Replace `/dev/sdX` with your actual USB drive).*
+
+4. **Storage Note:**
+   If you intend to save configurations (`save` / `load`), ensure the system has an ATA IDE drive attached. The kernel's built-in ATA PIO driver currently expects this to read/write the raw configuration sectors.
