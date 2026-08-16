@@ -151,11 +151,17 @@ void cli_execute(const char *cmd) {
     else if (strncmp(cmd, "ls", 2) == 0) {
         // Virtual File System list
         cli_set_color(VGA_LIGHT_BLUE, VGA_BLACK);
-        cli_puts("startup-config\t\t");
+        cli_puts("startup-config  ");
         cli_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-        cli_puts("running-config\t\t");
+        cli_puts("running-config  ");
         cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
         cli_puts("version\n");
+    }
+    else if (strncmp(cmd, "exit", 4) == 0) {
+        cli_set_color(VGA_YELLOW, VGA_BLACK);
+        cli_puts("Halting system. Use Ctrl-A X to exit QEMU.\n");
+        // We can halt the CPU:
+        __asm__ volatile ("cli; hlt");
     }
     else if (strncmp(cmd, "ntop", 4) == 0) {
         cli_set_color(VGA_WHITE, VGA_BLACK);

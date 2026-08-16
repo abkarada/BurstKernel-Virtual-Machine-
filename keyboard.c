@@ -62,12 +62,10 @@ void shell_execute() {
     shell_idx = 0;
     
     // Oh My Zsh style colorful prompt
-    set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    puts("➜  ");
     set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    puts("nkernel ");
-    set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
-    puts("✗ ");
+    puts("nkernel main ");
+    set_color(VGA_YELLOW, VGA_BLACK);
+    puts("❯ ");
     set_color(VGA_WHITE, VGA_BLACK); // Reset
 }
 
@@ -83,18 +81,14 @@ void keyboard_handler(void) {
             } else if (c == '\b') {
                 if (shell_idx > 0) {
                     shell_idx--;
-                    // For backspace, we should really update the VGA cursor, 
-                    // but for now just print a backspace character to serial and 
-                    // a space to VGA if we had a full driver. 
-                    // Minimal implementation:
+                    // puts("\b \b") will erase character on VGA and Serial.
                     puts("\b \b");
                 }
             } else {
                 if (shell_idx < SHELL_BUF_SIZE - 1) {
                     shell_buf[shell_idx++] = c;
                     char str[2] = {c, '\0'};
-                    puts(str);
-                    puts_serial(str);
+                    puts(str); // This echoes to both VGA and Serial, so we don't need puts_serial(str)
                 }
             }
         }
@@ -106,13 +100,12 @@ void keyboard_handler(void) {
 
 void keyboard_init(void) {
     // Oh My Zsh style colorful prompt
-    set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    puts("➜  ");
     set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    puts("nkernel ");
-    set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
-    puts("✗ ");
+    puts("nkernel main ");
+    set_color(VGA_YELLOW, VGA_BLACK);
+    puts("❯ ");
     set_color(VGA_WHITE, VGA_BLACK); // Reset
+    
     // Enable IRQ1 (Keyboard) on Master PIC
     uint8_t mask = inb(0x21);
     outb(0x21, mask & ~(1 << 1));
