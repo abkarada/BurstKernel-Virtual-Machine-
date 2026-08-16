@@ -163,6 +163,9 @@ void cli_execute(const char *cmd) {
         // We can halt the CPU:
         __asm__ volatile ("cli; hlt");
     }
+    else if (strncmp(cmd, "clear", 5) == 0) {
+        clear_screen();
+    }
     else if (strncmp(cmd, "ntop", 4) == 0) {
         cli_set_color(VGA_WHITE, VGA_BLACK);
         cli_puts("      [ INTERNET ]\n");

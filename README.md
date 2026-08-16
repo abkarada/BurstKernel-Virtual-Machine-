@@ -1,4 +1,4 @@
-# NKernel (Network Kernel) 🚀
+# NKernel (Network Kernel) 
 
 *A simple, lightweight, and fun side-project exploring unikernel architecture for high-speed packet routing.*
 
