@@ -73,11 +73,11 @@ void telnet_set_color(uint8_t fg, uint8_t bg) {
 
 static void print_telnet_prompt() {
     telnet_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    telnet_puts("\r\n➜  ");
+    telnet_puts("\r\n>  ");
     telnet_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     telnet_puts("nkernel ");
     telnet_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
-    telnet_puts("✗ ");
+    telnet_puts("X ");
     telnet_set_color(VGA_WHITE, VGA_BLACK);
 }
 
@@ -95,6 +95,13 @@ static err_t telnet_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
     char *data = (char *)p->payload;
     for (int i = 0; i < p->len; i++) {
         char c = data[i];
+        
+        #include "edit.h"
+        if (in_editor_mode) {
+            editor_handle_key(c);
+            continue;
+        }
+        
         if (c == '\r' || c == '\n') {
             if (telnet_idx > 0) {
                 telnet_buf[telnet_idx] = '\0';
@@ -116,12 +123,23 @@ static err_t telnet_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t 
                 cli_set_color = old_color;
             }
             telnet_idx = 0;
-            print_telnet_prompt();
+            if (!in_editor_mode) {
+                print_telnet_prompt();
+            }
         } else if (c == '\b' || c == 127) { // Backspace
             if (telnet_idx > 0) {
                 telnet_idx--;
                 telnet_puts("\b \b");
             }
+        } else if (c == '\t') {
+            // Hook cli_puts to telnet_puts for autocomplete
+            extern void (*cli_puts)(const char *s);
+            void (*old_puts)(const char *) = cli_puts;
+            cli_puts = telnet_puts;
+            
+            cli_autocomplete(telnet_buf, &telnet_idx, 256);
+            
+            cli_puts = old_puts;
         } else {
             if (telnet_idx < 255) {
                 telnet_buf[telnet_idx++] = c;

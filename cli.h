@@ -24,5 +24,6 @@ extern void set_color(uint8_t fg, uint8_t bg);
 extern void (*cli_puts)(const char *s);
 extern void (*cli_set_color)(uint8_t fg, uint8_t bg);
 void cli_execute(const char *cmd);
+void cli_autocomplete(char *buf, int *idx, int max_size);
 
 #endif

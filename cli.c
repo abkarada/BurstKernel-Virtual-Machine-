@@ -1,8 +1,11 @@
 #include "cli.h"
 #include "libc.h"
 #include "e1000.h"
-#include "nat.h"
 #include "kernel.h"
+#include "libc.h"
+#include "vfs.h"
+#include "edit.h"
+#include "nat.h"
 
 extern void puts(const char *s);
 extern void puts_serial(const char *s);
@@ -150,18 +153,12 @@ void cli_execute(const char *cmd) {
         cli_puts("Configuration loaded from disk.\n");
     }
     else if (strncmp(cmd, "ls", 2) == 0) {
-        // Virtual File System list
-        cli_set_color(VGA_LIGHT_BLUE, VGA_BLACK);
-        cli_puts("startup-config  ");
-        cli_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-        cli_puts("running-config  ");
-        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-        cli_puts("version\n");
+        extern void vfs_list(void);
+        vfs_list();
     }
     else if (strncmp(cmd, "exit", 4) == 0) {
         cli_set_color(VGA_YELLOW, VGA_BLACK);
         cli_puts("Halting system. Use Ctrl-A X to exit QEMU.\n");
-        // We can halt the CPU:
         __asm__ volatile ("cli; hlt");
     }
     else if (strncmp(cmd, "clear", 5) == 0) {
@@ -214,11 +211,9 @@ void cli_execute(const char *cmd) {
     }
     else if (strncmp(cmd, "cat ", 4) == 0) {
         const char *arg = cmd + 4;
-        if (strcmp(arg, "version") == 0) {
-            cli_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
-            cli_puts("NKernel v1.0 (Unikernel Router) - x86_64\n");
-        }
-        else if (strcmp(arg, "running-config") == 0) {
+        
+        // Keep the mocked config loading functionality as fallback/alias for old tests
+        if (strcmp(arg, "running-config") == 0) {
             cli_set_color(VGA_WHITE, VGA_BLACK);
             cli_puts("Current Routing Table (in RAM):\n");
             cli_execute("route print");
@@ -251,11 +246,23 @@ void cli_execute(const char *cmd) {
             }
         }
         else {
-            cli_set_color(VGA_LIGHT_RED, VGA_BLACK);
-            cli_puts("cat: ");
-            cli_puts(arg);
-            cli_puts(": No such file or directory\n");
+            // Check VFS
+            struct vfs_file *f = vfs_open(arg);
+            if (f) {
+                cli_set_color(VGA_WHITE, VGA_BLACK);
+                cli_puts(f->data);
+                if (f->size > 0 && f->data[f->size-1] != '\n') cli_puts("\n");
+            } else {
+                cli_set_color(VGA_LIGHT_RED, VGA_BLACK);
+                cli_puts("cat: ");
+                cli_puts(arg);
+                cli_puts(": No such file or directory\n");
+            }
         }
+    }
+    else if (strncmp(cmd, "edit ", 5) == 0) {
+        const char *arg = cmd + 5;
+        editor_start(arg);
     }
     else {
         cli_set_color(VGA_LIGHT_RED, VGA_BLACK);
@@ -264,4 +271,46 @@ void cli_execute(const char *cmd) {
         cli_puts("\n");
     }
     cli_set_color(VGA_WHITE, VGA_BLACK); // Reset to default
+}
+
+void cli_autocomplete(char *buf, int *idx, int max_size) {
+    if (*idx == 0) return;
+    buf[*idx] = '\0';
+    
+    // List of known commands
+    const char *commands[] = {"help", "ifconfig", "route print", "info", "save", "load", "ls", "exit", "clear", "ntop", "cat ", "edit "};
+    int num_cmds = sizeof(commands)/sizeof(commands[0]);
+    
+    // Check if it's a command
+    for (int i = 0; i < num_cmds; i++) {
+        if (strncmp(buf, commands[i], *idx) == 0) {
+            // Found a match
+            int cmd_len = strlen(commands[i]);
+            for (int j = *idx; j < cmd_len && *idx < max_size - 1; j++) {
+                buf[(*idx)++] = commands[i][j];
+                char str[2] = {commands[i][j], '\0'};
+                cli_puts(str);
+            }
+            return;
+        }
+    }
+    
+    // If it starts with "cat " or "edit ", try to autocomplete from VFS
+    if (strncmp(buf, "cat ", 4) == 0 || strncmp(buf, "edit ", 5) == 0) {
+        int prefix_len = (strncmp(buf, "cat ", 4) == 0) ? 4 : 5;
+        const char *arg = buf + prefix_len;
+        int arg_len = *idx - prefix_len;
+        
+        for (int i = 0; i < MAX_VFS_FILES; i++) {
+            if (vfs_nodes[i].is_used && strncmp(vfs_nodes[i].name, arg, arg_len) == 0) {
+                int name_len = strlen(vfs_nodes[i].name);
+                for (int j = arg_len; j < name_len && *idx < max_size - 1; j++) {
+                    buf[(*idx)++] = vfs_nodes[i].name[j];
+                    char str[2] = {vfs_nodes[i].name[j], '\0'};
+                    cli_puts(str);
+                }
+                return;
+            }
+        }
+    }
 }

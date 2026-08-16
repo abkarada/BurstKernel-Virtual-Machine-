@@ -27,7 +27,7 @@ LWIP_SRCS := $(LWIP_DIR)/core/init.c $(LWIP_DIR)/core/def.c \
              port/ethernetif.c
 
 LWIP_OBJS := $(LWIP_SRCS:.c=.o)
-OBJS    := boot.o kernel.o idt.o keyboard.o isr.o mm.o e1000.o libc.o cli.o telnetd.o ata.o nat.o $(LWIP_OBJS)
+OBJS    := boot.o kernel.o idt.o keyboard.o isr.o mm.o e1000.o libc.o cli.o telnetd.o ata.o nat.o vfs.o edit.o $(LWIP_OBJS)
 LINKER  := linker.ld
 GRUBCFG := grub.cfg
 ISODIR  := isodir/boot
@@ -61,6 +61,14 @@ isr.o: isr.s
 	@$(CC) $(CFLAGS) $< -o $@
 
 nat.o: nat.c
+	@echo "[CC]  $@"
+	@$(CC) $(CFLAGS) $< -o $@
+
+vfs.o: vfs.c
+	@echo "[CC]  $@"
+	@$(CC) $(CFLAGS) $< -o $@
+
+edit.o: edit.c
 	@echo "[CC]  $@"
 	@$(CC) $(CFLAGS) $< -o $@
 

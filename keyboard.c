@@ -5,18 +5,18 @@ extern void outb(uint16_t port, uint8_t val);
 extern void puts(const char *s);
 extern void puts_serial(const char *s);
 
-// A very basic US layout scancode map for pressed keys
-static const char kbd_us[128] = {
+// Turkish QWERTY layout scancode map (nearest ASCII equivalents)
+static const char kbd_tr[128] = {
     0,  27, '1', '2', '3', '4', '5', '6', '7', '8', /* 9 */
-  '9', '0', '-', '=', '\b', /* Backspace */
+  '9', '0', '*', '-', '\b', /* Backspace */
   '\t',     /* Tab */
   'q', 'w', 'e', 'r',   /* 19 */
-  't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', /* Enter key */
+  't', 'y', 'u', 'i', 'o', 'p', 'g', 'u', '\n', /* Enter key */
     0,      /* 29   - Control */
-  'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', /* 39 */
- '\'', '`',   0,        /* Left shift */
- '\\', 'z', 'x', 'c', 'v', 'b', 'n',      /* 49 */
-  'm', ',', '.', '/',   0,        /* Right shift */
+  'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 's', /* 39 */
+  'i', ',',   0,        /* Left shift */
+  '<', 'z', 'x', 'c', 'v', 'b', 'n',      /* 49 */
+  'm', 'o', 'c', '.',   0,        /* Right shift */
   '*',
     0,  /* Alt */
   ' ',  /* Space bar */
@@ -65,7 +65,7 @@ void shell_execute() {
     set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     puts("nkernel main ");
     set_color(VGA_YELLOW, VGA_BLACK);
-    puts("❯ ");
+    puts("> ");
     set_color(VGA_WHITE, VGA_BLACK); // Reset
 }
 
@@ -74,21 +74,28 @@ void keyboard_handler(void) {
     
     // Only handle key presses (top bit clear)
     if (!(scancode & 0x80)) {
-        char c = kbd_us[scancode];
+        char c = kbd_tr[scancode];
         if (c != 0) {
-            if (c == '\n') {
-                shell_execute();
-            } else if (c == '\b') {
-                if (shell_idx > 0) {
-                    shell_idx--;
-                    // puts("\b \b") will erase character on VGA and Serial.
-                    puts("\b \b");
-                }
+            #include "edit.h"
+            if (in_editor_mode) {
+                editor_handle_key(c);
             } else {
-                if (shell_idx < SHELL_BUF_SIZE - 1) {
-                    shell_buf[shell_idx++] = c;
-                    char str[2] = {c, '\0'};
-                    puts(str); // This echoes to both VGA and Serial, so we don't need puts_serial(str)
+                if (c == '\n') {
+                    shell_execute();
+                } else if (c == '\b') {
+                    if (shell_idx > 0) {
+                        shell_idx--;
+                        // puts("\b \b") will erase character on VGA and Serial.
+                        puts("\b \b");
+                    }
+                } else if (c == '\t') {
+                    cli_autocomplete(shell_buf, &shell_idx, SHELL_BUF_SIZE);
+                } else {
+                    if (shell_idx < SHELL_BUF_SIZE - 1) {
+                        shell_buf[shell_idx++] = c;
+                        char str[2] = {c, '\0'};
+                        puts(str); // Echo to VGA and Serial
+                    }
                 }
             }
         }

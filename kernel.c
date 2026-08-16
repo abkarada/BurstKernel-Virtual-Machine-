@@ -30,7 +30,7 @@ void puts(const char *s) {
                 cursor--;
                 vga[cursor] = (uint16_t)(' ') | (current_color << 8);
             }
-        } else {
+        } else if ((uint8_t)(*s) >= 32 && (uint8_t)(*s) <= 126) {
             vga[cursor++] = (uint16_t)(*s) | (current_color << 8);
         }
         s++;
@@ -250,6 +250,14 @@ void kmain(void) {
     
     lwip_init();
     puts("lwIP Initialized.\n");
+    
+    mm_init();
+    
+    // Initialize Virtual File System
+    extern void vfs_init(void);
+    vfs_init();
+    
+    // Initialize NAT Engine
     nat_init();
 
     // 6. Init E1000 and setup fastpath callback
