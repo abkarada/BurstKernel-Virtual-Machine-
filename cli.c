@@ -85,6 +85,46 @@ void cli_execute(const char *cmd) {
         cli_puts("  info        ");
         cli_set_color(VGA_WHITE, VGA_BLACK);
         cli_puts("- Show system info\n");
+        
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("  ntop        ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("- Network topology map\n");
+        
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("  nat show    ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("- Show NAT mapping table\n");
+        
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("  ls          ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("- List files in VFS\n");
+        
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("  cat <file>  ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("- Print file contents\n");
+        
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("  edit <file> ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("- Open text editor\n");
+        
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("  save / load ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("- Save/load config to disk\n");
+        
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("  clear       ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("- Clear screen\n");
+        
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("  exit        ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("- Halt system\n");
     }
     else if (strncmp(cmd, "info", 4) == 0) {
         cli_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
@@ -165,46 +205,313 @@ void cli_execute(const char *cmd) {
         clear_screen();
     }
     else if (strncmp(cmd, "ntop", 4) == 0) {
-        cli_set_color(VGA_WHITE, VGA_BLACK);
-        cli_puts("      [ INTERNET ]\n");
-        cli_puts("           |\n");
-        cli_puts("           | (WAN: 10.0.2.15)\n");
-        cli_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
-        cli_puts("   +---------------+\n");
-        cli_puts("   | NKernel Router|\n");
-        cli_puts("   +-------+-------+\n");
-        cli_set_color(VGA_WHITE, VGA_BLACK);
-        cli_puts("           | (LAN: 192.168.1.1)\n");
-        cli_puts("           |\n");
-        cli_puts("    +------+------+\n");
-        
-        // Scan NAT table for active hosts
+        // Scan NAT table for active hosts first
         extern struct nat_entry nat_table[MAX_NAT_ENTRIES];
-        uint32_t active_hosts[10];
+        uint32_t active_hosts[16];
+        uint16_t host_ports[16];   // one sample port per host
+        uint8_t  host_protos[16];  // protocol of sample
         int host_count = 0;
+        int total_sessions = 0;
+        int tcp_sessions = 0;
+        int udp_sessions = 0;
         
-        for (int i = 0; i < 2048; i++) { // MAX_NAT_ENTRIES
+        for (int i = 0; i < MAX_NAT_ENTRIES; i++) {
             if (nat_table[i].in_use) {
+                total_sessions++;
+                if (nat_table[i].protocol == NAT_PROTO_TCP) tcp_sessions++;
+                else udp_sessions++;
+                
                 int found = 0;
                 for (int j = 0; j < host_count; j++) {
                     if (active_hosts[j] == nat_table[i].internal_ip) {
                         found = 1; break;
                     }
                 }
-                if (!found && host_count < 10) {
-                    active_hosts[host_count++] = nat_table[i].internal_ip;
+                if (!found && host_count < 16) {
+                    active_hosts[host_count] = nat_table[i].internal_ip;
+                    host_ports[host_count] = nat_table[i].internal_port;
+                    host_protos[host_count] = nat_table[i].protocol;
+                    host_count++;
                 }
             }
         }
         
+        // === Header ===
+        cli_set_color(VGA_YELLOW, VGA_BLACK);
+        cli_puts("=== NKernel Network Topology ===\n\n");
+        
+        // === WAN Cloud ===
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts("          .--------.          \n");
+        cli_puts("         (  INTERNET )        \n");
+        cli_puts("          '--------'          \n");
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts("               |              \n");
+        cli_puts("               | WAN          \n");
+        
+        // === WAN Interface ===
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("         [");
         cli_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-        if (host_count == 0) {
-            cli_puts("      [No Hosts]\n");
+        cli_puts("10.0.2.15");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("]          \n");
+        
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts("               |              \n");
+        
+        // === Router Box ===
+        cli_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
+        cli_puts("    +=====================+   \n");
+        cli_puts("    ||  ");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("NKernel Router");
+        cli_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
+        cli_puts("   ||   \n");
+        cli_puts("    || ");
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts(" NAT | Firewall ");
+        cli_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
+        cli_puts(" ||   \n");
+        cli_puts("    +=====================+   \n");
+        
+        // === NAT stats inside router ===
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts("     Sessions: ");
+        cli_set_color(VGA_YELLOW, VGA_BLACK);
+        // Print total_sessions
+        if (total_sessions >= 100) {
+            char d[2] = { '0' + (total_sessions / 100), '\0' }; cli_puts(d);
+            char d2[2] = { '0' + ((total_sessions / 10) % 10), '\0' }; cli_puts(d2);
+            char d3[2] = { '0' + (total_sessions % 10), '\0' }; cli_puts(d3);
+        } else if (total_sessions >= 10) {
+            char d[2] = { '0' + (total_sessions / 10), '\0' }; cli_puts(d);
+            char d2[2] = { '0' + (total_sessions % 10), '\0' }; cli_puts(d2);
         } else {
-            for (int i = 0; i < host_count; i++) {
-                cli_puts("  [");
+            char d[2] = { '0' + total_sessions, '\0' }; cli_puts(d);
+        }
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts(" (TCP:");
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        if (tcp_sessions >= 10) {
+            char d[2] = { '0' + (tcp_sessions / 10), '\0' }; cli_puts(d);
+            char d2[2] = { '0' + (tcp_sessions % 10), '\0' }; cli_puts(d2);
+        } else {
+            char d[2] = { '0' + tcp_sessions, '\0' }; cli_puts(d);
+        }
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts(" UDP:");
+        cli_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        if (udp_sessions >= 10) {
+            char d[2] = { '0' + (udp_sessions / 10), '\0' }; cli_puts(d);
+            char d2[2] = { '0' + (udp_sessions % 10), '\0' }; cli_puts(d2);
+        } else {
+            char d[2] = { '0' + udp_sessions, '\0' }; cli_puts(d);
+        }
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts(")\n");
+        
+        // === LAN Interface ===
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts("               |              \n");
+        
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("         [");
+        cli_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        cli_puts("192.168.1.1");
+        cli_set_color(VGA_WHITE, VGA_BLACK);
+        cli_puts("]        \n");
+        
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts("               | LAN          \n");
+        
+        // === Switch representation ===
+        cli_set_color(VGA_LIGHT_BLUE, VGA_BLACK);
+        cli_puts("        +-----------+         \n");
+        cli_puts("        |  Switch   |         \n");
+        cli_puts("        +--+--+--+--+         \n");
+        
+        // === Host nodes ===
+        if (host_count == 0) {
+            cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+            cli_puts("           |                  \n");
+            cli_puts("      [No active hosts]       \n");
+        } else {
+            // Draw branch lines
+            cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+            cli_puts("        ");
+            for (int i = 0; i < host_count && i < 4; i++) {
+                cli_puts("  |  ");
+            }
+            cli_puts("\n");
+            
+            // Draw host boxes
+            for (int i = 0; i < host_count && i < 4; i++) {
+                cli_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+                cli_puts("     [");
                 print_ip(active_hosts[i]);
-                cli_puts("] ");
+                cli_puts("]\n");
+            }
+            
+            // If more than 4 hosts
+            if (host_count > 4) {
+                cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+                cli_puts("     ... and more\n");
+            }
+        }
+        
+        // === NIC Info ===
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts("\n--- Interfaces ---\n");
+        for (int i = 0; i < num_e1000_devices; i++) {
+            cli_set_color(VGA_WHITE, VGA_BLACK);
+            cli_puts("  en");
+            char id[2] = { '0' + i, '\0' };
+            cli_puts(id);
+            cli_puts(": ");
+            cli_set_color(VGA_YELLOW, VGA_BLACK);
+            print_mac(e1000_devs[i].mac);
+            cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+            cli_puts(" (E1000)\n");
+        }
+    }
+    else if (strncmp(cmd, "nat show", 8) == 0) {
+        extern struct nat_entry nat_table[MAX_NAT_ENTRIES];
+        
+        cli_set_color(VGA_YELLOW, VGA_BLACK);
+        cli_puts("=== NAT Mapping Table ===\n");
+        cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        cli_puts(" #   Proto  Internal IP       Int.Port  Ext.Port  Age\n");
+        cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+        cli_puts("---  -----  ----------------  --------  --------  ----\n");
+        
+        int count = 0;
+        for (int i = 0; i < MAX_NAT_ENTRIES; i++) {
+            if (!nat_table[i].in_use) continue;
+            count++;
+            
+            // Index number
+            cli_set_color(VGA_WHITE, VGA_BLACK);
+            if (count >= 100) {
+                char d[2] = { '0' + (count / 100), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((count / 10) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + (count % 10), '\0' }; cli_puts(d3);
+            } else if (count >= 10) {
+                cli_puts(" ");
+                char d[2] = { '0' + (count / 10), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + (count % 10), '\0' }; cli_puts(d2);
+            } else {
+                cli_puts("  ");
+                char d[2] = { '0' + count, '\0' }; cli_puts(d);
+            }
+            
+            // Protocol
+            cli_set_color(VGA_LIGHT_MAGENTA, VGA_BLACK);
+            if (nat_table[i].protocol == NAT_PROTO_TCP) {
+                cli_puts("  TCP   ");
+            } else {
+                cli_puts("  UDP   ");
+            }
+            
+            // Internal IP
+            cli_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+            print_ip(nat_table[i].internal_ip);
+            cli_puts("        ");
+            
+            // Internal Port (big-endian -> host)
+            cli_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+            uint16_t iport = nat_table[i].internal_port;
+            uint16_t iport_h = (iport << 8) | (iport >> 8);
+            if (iport_h >= 10000) {
+                char d[2] = { '0' + (iport_h / 10000), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((iport_h / 1000) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + ((iport_h / 100) % 10), '\0' }; cli_puts(d3);
+                char d4[2] = { '0' + ((iport_h / 10) % 10), '\0' }; cli_puts(d4);
+                char d5[2] = { '0' + (iport_h % 10), '\0' }; cli_puts(d5);
+            } else if (iport_h >= 1000) {
+                char d[2] = { '0' + (iport_h / 1000), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((iport_h / 100) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + ((iport_h / 10) % 10), '\0' }; cli_puts(d3);
+                char d4[2] = { '0' + (iport_h % 10), '\0' }; cli_puts(d4);
+            } else if (iport_h >= 100) {
+                char d[2] = { '0' + (iport_h / 100), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((iport_h / 10) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + (iport_h % 10), '\0' }; cli_puts(d3);
+            } else if (iport_h >= 10) {
+                char d[2] = { '0' + (iport_h / 10), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + (iport_h % 10), '\0' }; cli_puts(d2);
+            } else {
+                char d[2] = { '0' + iport_h, '\0' }; cli_puts(d);
+            }
+            cli_puts("      ");
+            
+            // External Port
+            cli_set_color(VGA_YELLOW, VGA_BLACK);
+            uint16_t eport = nat_table[i].external_port;
+            uint16_t eport_h = (eport << 8) | (eport >> 8);
+            if (eport_h >= 10000) {
+                char d[2] = { '0' + (eport_h / 10000), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((eport_h / 1000) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + ((eport_h / 100) % 10), '\0' }; cli_puts(d3);
+                char d4[2] = { '0' + ((eport_h / 10) % 10), '\0' }; cli_puts(d4);
+                char d5[2] = { '0' + (eport_h % 10), '\0' }; cli_puts(d5);
+            } else if (eport_h >= 1000) {
+                char d[2] = { '0' + (eport_h / 1000), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((eport_h / 100) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + ((eport_h / 10) % 10), '\0' }; cli_puts(d3);
+                char d4[2] = { '0' + (eport_h % 10), '\0' }; cli_puts(d4);
+            } else if (eport_h >= 100) {
+                char d[2] = { '0' + (eport_h / 100), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((eport_h / 10) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + (eport_h % 10), '\0' }; cli_puts(d3);
+            } else if (eport_h >= 10) {
+                char d[2] = { '0' + (eport_h / 10), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + (eport_h % 10), '\0' }; cli_puts(d2);
+            } else {
+                char d[2] = { '0' + eport_h, '\0' }; cli_puts(d);
+            }
+            cli_puts("      ");
+            
+            // Age (last_active tick)
+            cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+            uint32_t age = nat_table[i].last_active;
+            if (age >= 1000) {
+                char d[2] = { '0' + ((age / 1000) % 10), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((age / 100) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + ((age / 10) % 10), '\0' }; cli_puts(d3);
+                char d4[2] = { '0' + (age % 10), '\0' }; cli_puts(d4);
+            } else if (age >= 100) {
+                char d[2] = { '0' + (age / 100), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((age / 10) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + (age % 10), '\0' }; cli_puts(d3);
+            } else if (age >= 10) {
+                char d[2] = { '0' + (age / 10), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + (age % 10), '\0' }; cli_puts(d2);
+            } else {
+                char d[2] = { '0' + age, '\0' }; cli_puts(d);
+            }
+            
+            cli_puts("\n");
+        }
+        
+        if (count == 0) {
+            cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+            cli_puts("  (No active NAT sessions)\n");
+        } else {
+            cli_set_color(VGA_DARK_GRAY, VGA_BLACK);
+            cli_puts("---\n");
+            cli_set_color(VGA_WHITE, VGA_BLACK);
+            cli_puts("Total active mappings: ");
+            cli_set_color(VGA_YELLOW, VGA_BLACK);
+            if (count >= 100) {
+                char d[2] = { '0' + (count / 100), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + ((count / 10) % 10), '\0' }; cli_puts(d2);
+                char d3[2] = { '0' + (count % 10), '\0' }; cli_puts(d3);
+            } else if (count >= 10) {
+                char d[2] = { '0' + (count / 10), '\0' }; cli_puts(d);
+                char d2[2] = { '0' + (count % 10), '\0' }; cli_puts(d2);
+            } else {
+                char d[2] = { '0' + count, '\0' }; cli_puts(d);
             }
             cli_puts("\n");
         }
@@ -278,7 +585,7 @@ void cli_autocomplete(char *buf, int *idx, int max_size) {
     buf[*idx] = '\0';
     
     // List of known commands
-    const char *commands[] = {"help", "ifconfig", "route print", "info", "save", "load", "ls", "exit", "clear", "ntop", "cat ", "edit "};
+    const char *commands[] = {"help", "ifconfig", "route print", "info", "save", "load", "ls", "exit", "clear", "ntop", "nat show", "cat ", "edit "};
     int num_cmds = sizeof(commands)/sizeof(commands[0]);
     
     // Check if it's a command
